@@ -1,0 +1,350 @@
+// Cliente Socket.io y lógica de interfaz
+const socket = io();
+
+// Estado en memoria de la UI
+let currentStatus = 'disconnected';
+let chats = [];
+let activeChatId = null;
+
+// Elementos del DOM
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const btnConnect = document.getElementById('btn-connect');
+const btnDisconnect = document.getElementById('btn-disconnect');
+const userDisplayName = document.getElementById('user-display-name');
+
+const searchInput = document.getElementById('search-input');
+const chatListContainer = document.getElementById('chat-list');
+
+const placeholderView = document.getElementById('placeholder-view');
+const conversationView = document.getElementById('conversation-view');
+const chatHeaderName = document.getElementById('chat-header-name');
+const chatHeaderAvatar = document.getElementById('chat-header-avatar');
+const messagesContainer = document.getElementById('messages-container');
+
+const qrModal = document.getElementById('qr-modal');
+const qrImage = document.getElementById('qr-image');
+const qrSpinner = document.getElementById('qr-spinner');
+const qrStatusMsg = document.getElementById('qr-status-msg');
+const btnCloseQr = document.getElementById('btn-close-qr');
+
+/**
+ * Formatea una marca de tiempo en formato legible para chats (HH:mm o fecha)
+ */
+function formatTime(timestamp) {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const now = new Date();
+    
+    // Si es hoy, mostrar hora:minutos
+    if (date.toDateString() === now.toDateString()) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    // Si fue en los últimos 6 días, mostrar día de la semana
+    const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+    if (diffDays < 7) {
+        return date.toLocaleDateString([], { weekday: 'short' });
+    }
+    
+    // Si es más antiguo, mostrar fecha DD/MM/AA
+    return date.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
+/**
+ * Obtiene iniciales para el avatar
+ */
+function getInitials(name) {
+    if (!name) return '?';
+    const words = name.trim().split(/\s+/);
+    if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+    return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+/**
+ * Actualiza los indicadores visuales de estado de conexión
+ */
+function updateConnectionUI(state) {
+    currentStatus = state.status;
+
+    // Quitar clases anteriores
+    statusDot.className = 'status-dot';
+
+    switch (state.status) {
+        case 'connected':
+            statusDot.classList.add('status-connected');
+            statusText.textContent = 'Conectado';
+            btnConnect.classList.add('hidden');
+            btnDisconnect.classList.remove('hidden');
+            hideQRModal();
+            if (state.info && state.info.pushname) {
+                userDisplayName.textContent = state.info.pushname;
+            } else {
+                userDisplayName.textContent = 'WhatsApp Web';
+            }
+            break;
+
+        case 'connecting':
+            statusDot.classList.add('status-connecting');
+            statusText.textContent = state.message || 'Conectando...';
+            btnConnect.classList.add('hidden');
+            btnDisconnect.classList.remove('hidden');
+
+            // Si hay un código QR disponible, mostrarlo en el modal
+            if (state.qrCode) {
+                showQRModal(state.qrCode);
+            } else {
+                showQRModal(null, state.message || 'Iniciando sesión segura...');
+            }
+            break;
+
+        case 'disconnected':
+        default:
+            statusDot.classList.add('status-disconnected');
+            statusText.textContent = 'Desconectado';
+            btnConnect.classList.remove('hidden');
+            btnDisconnect.classList.add('hidden');
+            userDisplayName.textContent = 'WhatsApp';
+            hideQRModal();
+            break;
+    }
+}
+
+/**
+ * Muestra el modal con el código QR o spinner de carga
+ */
+function showQRModal(qrCodeUrl, customMsg) {
+    qrModal.classList.remove('hidden');
+    if (qrCodeUrl) {
+        qrImage.src = qrCodeUrl;
+        qrImage.classList.remove('hidden');
+        qrSpinner.classList.add('hidden');
+    } else {
+        qrImage.classList.add('hidden');
+        qrSpinner.classList.remove('hidden');
+        if (customMsg) {
+            qrStatusMsg.textContent = customMsg;
+        }
+    }
+}
+
+/**
+ * Oculta el modal de código QR
+ */
+function hideQRModal() {
+    qrModal.classList.add('hidden');
+    qrImage.classList.add('hidden');
+    qrSpinner.classList.remove('hidden');
+}
+
+/**
+ * Renderiza la lista de conversaciones en el panel lateral
+ */
+function renderChats() {
+    const searchTerm = searchInput.value.toLowerCase().trim();
+    const filteredChats = chats.filter(chat => {
+        const nameMatch = (chat.name || '').toLowerCase().includes(searchTerm);
+        const lastMsgMatch = (chat.lastMessage || '').toLowerCase().includes(searchTerm);
+        return nameMatch || lastMsgMatch;
+    });
+
+    if (filteredChats.length === 0) {
+        if (currentStatus !== 'connected') {
+            chatListContainer.innerHTML = `
+                <div class="empty-state-list">
+                    <p>No hay conexión activa.</p>
+                    <p class="sub-tip">Haz clic en <strong>Conectar</strong> para vincular tu WhatsApp.</p>
+                </div>
+            `;
+        } else {
+            chatListContainer.innerHTML = `
+                <div class="empty-state-list">
+                    <p>No se encontraron conversaciones.</p>
+                </div>
+            `;
+        }
+        return;
+    }
+
+    chatListContainer.innerHTML = '';
+    filteredChats.forEach(chat => {
+        const item = document.createElement('div');
+        item.className = `chat-item ${chat.id === activeChatId ? 'active' : ''}`;
+        item.dataset.chatId = chat.id;
+
+        const initials = getInitials(chat.name);
+        const timeDisplay = formatTime(chat.timestamp);
+
+        item.innerHTML = `
+            <div class="chat-avatar">${initials}</div>
+            <div class="chat-details">
+                <div class="chat-top-row">
+                    <span class="chat-name">${escapeHTML(chat.name)}</span>
+                    <span class="chat-time">${timeDisplay}</span>
+                </div>
+                <div class="chat-bottom-row">
+                    <span class="chat-last-message">${escapeHTML(chat.lastMessage || '')}</span>
+                    ${chat.unreadCount > 0 ? `<span class="unread-badge">${chat.unreadCount}</span>` : ''}
+                </div>
+            </div>
+        `;
+
+        item.addEventListener('click', () => selectChat(chat));
+        chatListContainer.appendChild(item);
+    });
+}
+
+/**
+ * Selecciona una conversación y carga sus mensajes
+ */
+function selectChat(chat) {
+    activeChatId = chat.id;
+
+    // Actualizar clase activa en la lista
+    document.querySelectorAll('.chat-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.chatId === chat.id);
+    });
+
+    // Actualizar cabecera de la conversación
+    chatHeaderName.textContent = chat.name;
+    chatHeaderAvatar.textContent = getInitials(chat.name);
+
+    // Cambiar vista de placeholder a conversación activa
+    placeholderView.classList.add('hidden');
+    conversationView.classList.remove('hidden');
+
+    // Mostrar loader de mensajes y pedir datos al servidor
+    messagesContainer.innerHTML = '<div class="messages-loading">Cargando mensajes de la conversación...</div>';
+    socket.emit('get_messages', chat.id);
+}
+
+/**
+ * Renderiza los mensajes dentro de la conversación activa
+ */
+function renderMessages(messages) {
+    if (!messages || messages.length === 0) {
+        messagesContainer.innerHTML = '<div class="messages-loading">No hay mensajes recientes en esta conversación.</div>';
+        return;
+    }
+
+    messagesContainer.innerHTML = '';
+    messages.forEach(msg => {
+        appendMessageBubble(msg, false);
+    });
+
+    // Desplazar al último mensaje (abajo)
+    scrollToBottom();
+}
+
+/**
+ * Añade una burbuja de mensaje individual al contenedor
+ */
+function appendMessageBubble(msg, shouldScroll = true) {
+    const isOut = msg.fromMe;
+    const bubble = document.createElement('div');
+    bubble.className = `message-bubble ${isOut ? 'message-out' : 'message-in'}`;
+    bubble.dataset.msgId = msg.id;
+
+    const formattedTime = msg.timestamp 
+        ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        : '';
+
+    bubble.innerHTML = `
+        <div class="message-body">${escapeHTML(msg.body || '')}</div>
+        <div class="message-meta">
+            <span class="message-time">${formattedTime}</span>
+            ${isOut ? '<span class="message-ticks">✓✓</span>' : ''}
+        </div>
+    `;
+
+    messagesContainer.appendChild(bubble);
+
+    if (shouldScroll) {
+        scrollToBottom();
+    }
+}
+
+/**
+ * Desplaza suavemente el panel de mensajes hacia el final
+ */
+function scrollToBottom() {
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+/**
+ * Escapar texto para prevenir inyecciones HTML en el navegador
+ */
+function escapeHTML(str) {
+    if (!str) return '';
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+/* =====================================
+   MANEJO DE EVENTOS DE SOCKET.IO
+   ===================================== */
+
+// Cambio de estado de la conexión
+socket.on('status_change', (state) => {
+    console.log('Cambio de estado:', state);
+    updateConnectionUI(state);
+});
+
+// Lista de chats recibida o actualizada
+socket.on('chats_list', (newChats) => {
+    chats = newChats;
+    renderChats();
+});
+
+// Lista de mensajes de la conversación activa
+socket.on('messages_list', (data) => {
+    if (data.chatId === activeChatId) {
+        renderMessages(data.messages);
+    }
+});
+
+// Nuevo mensaje entrante o saliente en tiempo real
+socket.on('new_message', (msg) => {
+    console.log('Nuevo mensaje recibido:', msg);
+
+    // Si el mensaje pertenece a la conversación abierta actualmente
+    if (activeChatId && (msg.chatId === activeChatId || msg.from === activeChatId || msg.to === activeChatId)) {
+        appendMessageBubble(msg, true);
+    }
+});
+
+/* =====================================
+   INTERACCIONES DE USUARIO
+   ===================================== */
+
+// Botón de Conectar
+btnConnect.addEventListener('click', () => {
+    showQRModal(null, 'Iniciando cliente de WhatsApp...');
+    socket.emit('start_connection');
+});
+
+// Botón de Desconectar / Salir
+btnDisconnect.addEventListener('click', () => {
+    if (confirm('¿Deseas cerrar la sesión de WhatsApp actual?')) {
+        socket.emit('disconnect_session');
+        chats = [];
+        activeChatId = null;
+        renderChats();
+        conversationView.classList.add('hidden');
+        placeholderView.classList.remove('hidden');
+    }
+});
+
+// Botón para cerrar modal de QR manualmente
+btnCloseQr.addEventListener('click', () => {
+    hideQRModal();
+});
+
+// Filtrado en vivo de chats
+searchInput.addEventListener('input', () => {
+    renderChats();
+});
