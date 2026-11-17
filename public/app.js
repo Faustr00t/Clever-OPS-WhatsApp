@@ -21,6 +21,12 @@ const conversationView = document.getElementById('conversation-view');
 const chatHeaderName = document.getElementById('chat-header-name');
 const chatHeaderAvatar = document.getElementById('chat-header-avatar');
 const messagesContainer = document.getElementById('messages-container');
+const messageForm = document.getElementById('message-form');
+const messageInput = document.getElementById('message-input');
+const sendError = document.getElementById('send-error');
+const mediaInput = document.getElementById('media-input');
+const btnAttach = document.getElementById('btn-attach');
+const attachmentName = document.getElementById('attachment-name');
 
 const qrModal = document.getElementById('qr-modal');
 const qrImage = document.getElementById('qr-image');
@@ -69,6 +75,7 @@ function updateConnectionUI(state) {
 
     // Quitar clases anteriores
     statusDot.className = 'status-dot';
+    statusText.title = '';
 
     switch (state.status) {
         case 'connected':
@@ -101,7 +108,8 @@ function updateConnectionUI(state) {
         case 'disconnected':
         default:
             statusDot.classList.add('status-disconnected');
-            statusText.textContent = 'Desconectado';
+            statusText.textContent = state.error || state.message || 'Desconectado';
+            statusText.title = state.error || state.message || '';
             btnConnect.classList.remove('hidden');
             btnDisconnect.classList.add('hidden');
             userDisplayName.textContent = 'WhatsApp';
@@ -199,6 +207,7 @@ function renderChats() {
  */
 function selectChat(chat) {
     activeChatId = chat.id;
+    sendError.textContent = '';
 
     // Actualizar clase activa en la lista
     document.querySelectorAll('.chat-item').forEach(el => {
@@ -259,6 +268,17 @@ function appendMessageBubble(msg, shouldScroll = true) {
 
     messagesContainer.appendChild(bubble);
 
+    if (msg.hasMedia) {
+        const loadMedia = document.createElement('button');
+        loadMedia.className = 'media-load-button';
+        loadMedia.textContent = `Cargar ${msg.mediaFilename || 'archivo multimedia'}`;
+        loadMedia.dataset.chatId = msg.chatId;
+        loadMedia.dataset.messageId = msg.id;
+        const body = bubble.querySelector('.message-body');
+        body.appendChild(document.createElement('br'));
+        body.appendChild(loadMedia);
+    }
+
     if (shouldScroll) {
         scrollToBottom();
     }
@@ -315,6 +335,83 @@ socket.on('new_message', (msg) => {
     if (activeChatId && (msg.chatId === activeChatId || msg.from === activeChatId || msg.to === activeChatId)) {
         appendMessageBubble(msg, true);
     }
+});
+
+messagesContainer.addEventListener('click', (event) => {
+    const button = event.target.closest('.media-load-button');
+    if (!button) return;
+
+    button.disabled = true;
+    button.textContent = 'Cargando archivo...';
+    socket.emit('get_media', { chatId: button.dataset.chatId, messageId: button.dataset.messageId }, (result) => {
+        if (!result?.ok) {
+            button.disabled = false;
+            button.textContent = result?.error || 'No se pudo cargar el archivo';
+            return;
+        }
+
+        const { mimetype, data, filename } = result.media;
+        const url = `data:${mimetype};base64,${data}`;
+        let mediaElement;
+        if (mimetype.startsWith('image/') && mimetype !== 'image/svg+xml') {
+            mediaElement = document.createElement('img');
+            mediaElement.alt = filename || 'Imagen recibida';
+        } else if (mimetype.startsWith('video/')) {
+            mediaElement = document.createElement('video');
+            mediaElement.controls = true;
+        } else if (mimetype.startsWith('audio/')) {
+            mediaElement = document.createElement('audio');
+            mediaElement.controls = true;
+        } else {
+            mediaElement = document.createElement('a');
+            mediaElement.download = filename || 'archivo';
+            mediaElement.textContent = `Descargar ${filename || 'archivo'}`;
+        }
+        mediaElement.classList.add('media-preview');
+        if (mediaElement.tagName === 'A') mediaElement.href = url;
+        else mediaElement.src = url;
+        button.replaceWith(mediaElement);
+    });
+});
+
+mediaInput.addEventListener('change', () => {
+    attachmentName.textContent = mediaInput.files[0]?.name || '';
+    sendError.textContent = '';
+});
+
+btnAttach.addEventListener('click', () => mediaInput.click());
+
+messageForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const body = messageInput.value.trim();
+    const file = mediaInput.files[0];
+    const chatId = activeChatId;
+    if ((!body && !file) || !chatId) return;
+
+    sendError.textContent = '';
+    const send = (media) => socket.emit('send_message', { chatId, body, media }, (result) => {
+        if (result?.ok) {
+            if (activeChatId === chatId && messageInput.value.trim() === body && mediaInput.files[0] === file) {
+                messageInput.value = '';
+                mediaInput.value = '';
+                attachmentName.textContent = '';
+            }
+        } else if (activeChatId === chatId) sendError.textContent = result?.error || 'No se pudo enviar el mensaje';
+    });
+
+    if (!file) return send();
+    if (file.size > 8 * 1024 * 1024) {
+        if (activeChatId === chatId) sendError.textContent = 'El archivo supera el límite de 8 MB';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => send({
+        mimetype: file.type || 'application/octet-stream',
+        filename: file.name,
+        data: reader.result.split(',')[1]
+    });
+    reader.onerror = () => { if (activeChatId === chatId) sendError.textContent = 'No se pudo leer el archivo'; };
+    reader.readAsDataURL(file);
 });
 
 /* =====================================

@@ -106,10 +106,16 @@
                         <div class="messages-loading" id="messages-loading">Cargando mensajes...</div>
                     </div>
 
-                    <!-- Barra inferior de solo visualización -->
+                    <!-- Barra para enviar mensajes -->
                     <footer class="conversation-footer">
-                        <span class="mode-badge">Visualizador en Tiempo Real</span>
-                        <span class="mode-info">Los nuevos mensajes recibidos y enviados aparecerán aquí automáticamente.</span>
+                        <form id="message-form" class="message-form">
+                            <button id="btn-attach" class="attach-button" type="button" title="Adjuntar archivo" aria-label="Adjuntar archivo">📎</button>
+                            <input id="media-input" type="file" hidden>
+                            <input id="message-input" type="text" placeholder="Escribe un mensaje" autocomplete="off" aria-label="Escribe un mensaje">
+                            <button class="btn-primary" type="submit">Enviar</button>
+                        </form>
+                        <span id="attachment-name" class="attachment-name"></span>
+                        <p id="send-error" class="send-error" role="alert" aria-live="polite"></p>
                     </footer>
                 </div>
             </main>

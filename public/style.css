@@ -523,26 +523,78 @@ body {
 
 /* Pie de conversación (modo visualización) */
 .conversation-footer {
-    height: 48px;
+    min-height: 64px;
     background-color: var(--wa-bg-app);
     border-top: 1px solid var(--wa-border);
     display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    padding: 0 16px;
-    font-size: 13px;
-    color: var(--wa-text-secondary);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 10px 16px;
 }
 
-.mode-badge {
-    background-color: #e2e8ea;
-    color: #3b4a54;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 12px;
-    text-transform: uppercase;
+.message-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.message-form input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 14px;
+    font-size: 14px;
+    outline: none;
+}
+
+.message-form input[type="text"] {
+    width: 0;
+}
+
+.attach-button {
+    border: 0;
+    background: transparent;
+    color: var(--wa-text-secondary);
+    cursor: pointer;
+    font-size: 22px;
+}
+
+.attachment-name {
+    max-width: 45%;
+    overflow: hidden;
+    color: var(--wa-text-secondary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.send-error { margin: 0; }
+
+.media-preview {
+    display: block;
+    max-width: min(360px, 100%);
+    max-height: 360px;
+    border-radius: 6px;
+}
+
+.media-load-button {
+    border: 0;
+    background: none;
+    color: var(--wa-green);
+    cursor: pointer;
+    padding: 4px 0;
+}
+
+.message-bubble audio.media-preview {
+    max-width: 300px;
+}
+
+.send-error {
+    color: #b42318;
+    font-size: 12px;
 }
 
 /* ================================

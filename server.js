@@ -1,15 +1,84 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
 const { Server } = require('socket.io');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { maxHttpBufferSize: 12 * 1024 * 1024 });
 
 const PORT = process.env.PORT || 3000;
+// shortcut: archivos de hasta 8 MB; para archivos mayores, migrar a carga HTTP por streaming.
+const MAX_MEDIA_SIZE = 8 * 1024 * 1024;
+const authDataPath = path.join(__dirname, '.wwebjs_auth');
+const authSessionPath = path.join(authDataPath, 'session');
+const instanceLockPath = path.join(authDataPath, 'instance.lock');
+let ownsInstanceLock = false;
+
+class SessionSafeLocalAuth extends LocalAuth {
+    // Se elimina el perfil desde la app después de cerrar Chromium.
+    async logout() {}
+}
+
+function acquireInstanceLock() {
+    fs.mkdirSync(path.dirname(instanceLockPath), { recursive: true });
+    try {
+        fs.writeFileSync(instanceLockPath, String(process.pid), { flag: 'wx' });
+        ownsInstanceLock = true;
+        return true;
+    } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+        let pid;
+        try {
+            pid = Number(fs.readFileSync(instanceLockPath, 'utf8'));
+        } catch (readError) {
+            if (readError.code === 'ENOENT') return acquireInstanceLock();
+            throw readError;
+        }
+        if (!Number.isSafeInteger(pid) || pid < 1) return false;
+        try {
+            process.kill(pid, 0);
+            return false;
+        } catch (processError) {
+            if (processError.code !== 'ESRCH') throw processError;
+            const recoveryPath = `${instanceLockPath}.recovery`;
+            try {
+                fs.mkdirSync(recoveryPath);
+            } catch (recoveryError) {
+                if (recoveryError.code === 'EEXIST') return false;
+                throw recoveryError;
+            }
+            try {
+                if (Number(fs.readFileSync(instanceLockPath, 'utf8')) !== pid) return false;
+                try {
+                    process.kill(pid, 0);
+                    return false;
+                } catch (ownerError) {
+                    if (ownerError.code !== 'ESRCH') throw ownerError;
+                    fs.unlinkSync(instanceLockPath);
+                }
+            } finally {
+                fs.rmdirSync(recoveryPath);
+            }
+            return acquireInstanceLock();
+        }
+    }
+}
+
+function releaseInstanceLock() {
+    if (!ownsInstanceLock) return;
+    try {
+        if (fs.readFileSync(instanceLockPath, 'utf8') === String(process.pid)) fs.unlinkSync(instanceLockPath);
+    } catch (err) {
+        if (err.code !== 'ENOENT') console.error('No se pudo liberar el bloqueo de WhatsApp:', err);
+    }
+    ownsInstanceLock = false;
+}
+
+process.once('exit', releaseInstanceLock);
 
 // Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
@@ -24,6 +93,7 @@ let connectionState = {
 };
 
 let client = null;
+let closingClient = false;
 
 /**
  * Normaliza y formatea un objeto de mensaje para el frontend
@@ -36,6 +106,8 @@ function formatMessage(msg) {
         to: msg.to,
         fromMe: msg.fromMe,
         body: msg.body || (msg.hasMedia ? '[Archivo multimedia]' : ''),
+        hasMedia: msg.hasMedia,
+        mediaFilename: msg._data?.filename || null,
         type: msg.type,
         timestamp: msg.timestamp ? msg.timestamp * 1000 : Date.now(),
         author: msg.author || null
@@ -72,8 +144,23 @@ async function formatChats(rawChats) {
  * Inicializa el cliente de WhatsApp
  */
 function initWhatsAppClient() {
-    if (client) {
-        console.log('Cliente ya inicializado o en proceso.');
+    if (client || closingClient) {
+        console.log('Cliente ya inicializado, en proceso o cerrándose.');
+        return;
+    }
+
+    try {
+        if (!acquireInstanceLock()) {
+            connectionState.status = 'disconnected';
+            connectionState.message = 'WhatsApp ya está abierto en otra instancia. Ciérrala antes de volver a conectar.';
+            io.emit('status_change', connectionState);
+            return;
+        }
+    } catch (err) {
+        console.error('No se pudo bloquear la sesión de WhatsApp:', err);
+        connectionState.status = 'disconnected';
+        connectionState.error = err.message;
+        io.emit('status_change', connectionState);
         return;
     }
 
@@ -83,9 +170,9 @@ function initWhatsAppClient() {
     delete connectionState.message;
     io.emit('status_change', connectionState);
 
-    client = new Client({
-        authStrategy: new LocalAuth({
-            dataPath: path.join(__dirname, '.wwebjs_auth')
+    const whatsappClient = client = new Client({
+        authStrategy: new SessionSafeLocalAuth({
+            dataPath: authDataPath
         }),
         puppeteer: {
             headless: true,
@@ -102,7 +189,7 @@ function initWhatsAppClient() {
     });
 
     // Evento: Generación de código QR
-    client.on('qr', async (qr) => {
+    whatsappClient.on('qr', async (qr) => {
         console.log('Código QR recibido');
         try {
             const qrDataUrl = await qrcode.toDataURL(qr, { width: 280, margin: 2 });
@@ -120,7 +207,7 @@ function initWhatsAppClient() {
     });
 
     // Evento: Autenticado
-    client.on('authenticated', () => {
+    whatsappClient.on('authenticated', () => {
         console.log('Cliente autenticado correctamente');
         connectionState.status = 'connecting';
         connectionState.qrCode = null;
@@ -128,20 +215,20 @@ function initWhatsAppClient() {
     });
 
     // Evento: Listo / Conectado
-    client.on('ready', async () => {
+    whatsappClient.on('ready', async () => {
         console.log('WhatsApp Web está listo y conectado!');
         connectionState.status = 'connected';
         connectionState.qrCode = null;
-        connectionState.info = client.info ? {
-            wid: client.info.wid ? client.info.wid._serialized : null,
-            pushname: client.info.pushname || 'Usuario'
+        connectionState.info = whatsappClient.info ? {
+            wid: whatsappClient.info.wid ? whatsappClient.info.wid._serialized : null,
+            pushname: whatsappClient.info.pushname || 'Usuario'
         } : null;
 
         io.emit('status_change', connectionState);
 
         // Notificar y cargar conversaciones iniciales
         try {
-            const rawChats = await client.getChats();
+            const rawChats = await whatsappClient.getChats();
             const formatted = await formatChats(rawChats);
             io.emit('chats_list', formatted);
         } catch (err) {
@@ -150,33 +237,57 @@ function initWhatsAppClient() {
     });
 
     // Evento: Fallo de autenticación
-    client.on('auth_failure', (msg) => {
+    whatsappClient.on('auth_failure', async (msg) => {
+        if (client !== whatsappClient || closingClient) return;
+        closingClient = true;
         console.error('Fallo de autenticación:', msg);
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
         connectionState.info = null;
         io.emit('status_change', { ...connectionState, error: 'Fallo al autenticar' });
-        client = null;
+        try {
+            await whatsappClient.destroy();
+            await fs.promises.rm(authSessionPath, { recursive: true, force: true, maxRetries: 10 });
+        } catch (err) {
+            console.error('Error limpiando cliente tras fallo de autenticación:', err);
+        } finally {
+            if (client === whatsappClient) client = null;
+            closingClient = false;
+            releaseInstanceLock();
+        }
     });
 
     // Evento: Desconectado
-    client.on('disconnected', (reason) => {
+    whatsappClient.on('disconnected', async (reason) => {
+        if (client !== whatsappClient || closingClient) return;
+        closingClient = true;
         console.log('Cliente desconectado:', reason);
-        connectionState.status = 'disconnected';
-        connectionState.qrCode = null;
-        connectionState.info = null;
-        io.emit('status_change', connectionState);
-        client = null;
+        try {
+            await whatsappClient.destroy();
+            if (reason === 'LOGOUT') {
+                await fs.promises.rm(authSessionPath, { recursive: true, force: true, maxRetries: 10 });
+            }
+        } catch (err) {
+            console.error('Error cerrando cliente desconectado:', err);
+        } finally {
+            if (client === whatsappClient) client = null;
+            closingClient = false;
+            releaseInstanceLock();
+            connectionState.status = 'disconnected';
+            connectionState.qrCode = null;
+            connectionState.info = null;
+            io.emit('status_change', connectionState);
+        }
     });
 
     // Evento: Nuevo mensaje (recibido o enviado por el usuario)
-    client.on('message_create', async (msg) => {
+    whatsappClient.on('message_create', async (msg) => {
         try {
             const formattedMsg = formatMessage(msg);
             io.emit('new_message', formattedMsg);
 
             // Refrescar y emitir lista de chats actualizada para reflejar orden y último mensaje
-            const rawChats = await client.getChats();
+            const rawChats = await whatsappClient.getChats();
             const formatted = await formatChats(rawChats);
             io.emit('chats_list', formatted);
         } catch (err) {
@@ -184,12 +295,22 @@ function initWhatsAppClient() {
         }
     });
 
-    client.initialize().catch(err => {
+    whatsappClient.initialize().catch(async err => {
+        if (client !== whatsappClient) return;
+        closingClient = true;
         console.error('Error al inicializar cliente:', err);
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
         io.emit('status_change', { ...connectionState, error: err.message });
-        client = null;
+        try {
+            await whatsappClient.destroy();
+        } catch (destroyError) {
+            console.error('Error cerrando el cliente tras fallar la inicialización:', destroyError);
+        } finally {
+            if (client === whatsappClient) client = null;
+            closingClient = false;
+            releaseInstanceLock();
+        }
     });
 }
 
@@ -249,20 +370,82 @@ io.on('connection', async (socket) => {
         }
     });
 
+    socket.on('send_message', async (data, acknowledge) => {
+        const whatsappClient = client;
+        try {
+            if (!whatsappClient || closingClient || connectionState.status !== 'connected') {
+                throw new Error('WhatsApp no está conectado');
+            }
+            const { chatId, body = '', media } = data || {};
+            if (typeof chatId !== 'string' || typeof body !== 'string' || (!body.trim() && !media)) {
+                throw new Error('Escribe un mensaje o selecciona un archivo');
+            }
+
+            const chat = await whatsappClient.getChatById(chatId);
+            if (client !== whatsappClient || closingClient) {
+                throw new Error('WhatsApp se desconectó antes de completar el envío. Revisa la conversación antes de volver a intentarlo.');
+            }
+            if (media) {
+                if (typeof media.data !== 'string' || media.data.length % 4 !== 0 || !/^[\w+/]*={0,2}$/.test(media.data) || typeof media.mimetype !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(media.mimetype) || typeof media.filename !== 'string' || Buffer.byteLength(media.data, 'base64') > MAX_MEDIA_SIZE) {
+                    throw new Error('El archivo no es válido o supera el límite de 8 MB');
+                }
+                await chat.sendMessage(new MessageMedia(media.mimetype, media.data, media.filename), body.trim() ? { caption: body.trim() } : {});
+            } else {
+                await chat.sendMessage(body.trim());
+            }
+            acknowledge?.({ ok: true });
+        } catch (err) {
+            console.error('Error enviando mensaje:', err);
+            if (err.message?.includes('detached Frame') && client === whatsappClient && !closingClient) {
+                whatsappClient.emit('disconnected', 'BROWSER_FRAME_DETACHED');
+                acknowledge?.({ ok: false, error: 'WhatsApp Web perdió la conexión durante el envío. Reconéctalo y revisa la conversación antes de volver a intentarlo.' });
+                return;
+            }
+            acknowledge?.({ ok: false, error: err.message || 'No se pudo enviar el mensaje' });
+        }
+    });
+
+    socket.on('get_media', async (data, acknowledge) => {
+        try {
+            if (!client || connectionState.status !== 'connected') throw new Error('WhatsApp no está conectado');
+            const { chatId, messageId } = data || {};
+            if (typeof chatId !== 'string' || typeof messageId !== 'string') throw new Error('Mensaje no válido');
+            const message = await client.getMessageById(messageId);
+            if (!message?.hasMedia || (message.fromMe ? message.to : message.from) !== chatId) throw new Error('No se encontró el archivo');
+            const media = await message.downloadMedia();
+            if (!media) throw new Error('No se pudo descargar el archivo');
+            if (Buffer.byteLength(media.data, 'base64') > MAX_MEDIA_SIZE) throw new Error('El archivo supera el límite de 8 MB');
+            acknowledge?.({ ok: true, media });
+        } catch (err) {
+            console.error('Error obteniendo archivo multimedia:', err);
+            acknowledge?.({ ok: false, error: err.message || 'No se pudo cargar el archivo' });
+        }
+    });
+
     // Desconectar sesión manualmente
     socket.on('disconnect_session', async () => {
-        if (client) {
+        const whatsappClient = client;
+        if (whatsappClient) {
+            closingClient = true;
+            client = null;
             try {
-                await client.logout();
+                await whatsappClient.logout();
             } catch (e) {
                 console.warn('Error al hacer logout:', e.message);
             }
             try {
-                await client.destroy();
+                await whatsappClient.destroy();
             } catch (e) {
                 console.warn('Error al destruir cliente:', e.message);
             }
-            client = null;
+            try {
+                await fs.promises.rm(authSessionPath, { recursive: true, force: true, maxRetries: 10 });
+            } catch (e) {
+                console.warn('Error al limpiar la sesión local:', e.message);
+            } finally {
+                closingClient = false;
+                releaseInstanceLock();
+            }
         }
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
