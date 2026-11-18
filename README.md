@@ -35,9 +35,7 @@ proyect2/
 ## Instrucciones de Instalación y Ejecución
 
 1. Abrir una terminal en el directorio del proyecto:
-   ```bash
-   cd c:\Users\salda\Desktop\proyect2
-   ```
+  
 
 2. Instalar dependencias (si aún no se han instalado):
    ```bash
