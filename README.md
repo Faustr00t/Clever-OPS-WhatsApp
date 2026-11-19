@@ -13,6 +13,10 @@ Este proyecto es un módulo experimental y minimalista para visualizar conversac
 4. **Buscador de chats**: Filtrado rápido de conversaciones.
 5. **Panel de mensajes**: Panel derecho con diseño y colores de burbujas de WhatsApp (entrantes y salientes).
 6. **Actualización en tiempo real**: Mediante WebSockets (`socket.io`), los mensajes nuevos (entrantes y salientes) y la lista de conversaciones se actualizan automáticamente sin recargar la página.
+7. **Capa de Abstracción para Resúmenes con IA (`SummaryService`)**:
+   - Botón *"Generar resumen"* en cada conversación activa.
+   - Proveedor simulado (`MockSummaryProvider`) que devuelve temas, participantes, pendientes y fechas detectadas.
+   - Arquitectura lista para conectar en el futuro **Google Gemini**, **OpenAI** o **Claude** sin tocar la interfaz ni la lógica existente.
 
 ## Estructura del Proyecto
 
@@ -22,10 +26,30 @@ proyect2/
 │   ├── index.html     # Interfaz de usuario (página única estilo WhatsApp Web)
 │   ├── style.css      # Estilos visuales acordes a la paleta de WhatsApp
 │   └── app.js         # Lógica frontend y conexión Socket.io
+├── services/
+│   └── summary/
+│       ├── SummaryProvider.js          # Interfaz / Clase base
+│       ├── MockSummaryProvider.js      # Implementación simulada
+│       ├── SummaryService.js           # Servicio desacoplado
+│       ├── index.js                    # Exportación y singleton
+│       └── providers/                  # Plantillas para Gemini, OpenAI, Claude
+├── .env.example       # Plantilla de variables de entorno
+├── .env               # Variables de entorno (API Keys - ignorado por Git)
 ├── server.js          # Servidor Express, cliente WhatsApp y WebSocket
 ├── package.json       # Dependencias y scripts
 └── README.md          # Documentación
 ```
+
+## Configuración de Inteligencia Artificial (Google Gemini)
+
+El proyecto incluye integración directa con **Google Gemini** para resumir conversaciones:
+
+1. Crea o abre tu archivo `.env` en la raíz del proyecto.
+2. Agrega tu clave de API gratuita de [Google AI Studio](https://aistudio.google.com/app/apikey):
+   ```env
+   GEMINI_API_KEY=tu_api_key_aqui
+   ```
+3. Si no configuras la clave, el sistema automáticamente usará el proveedor simulado (`MockSummaryProvider`) sin que la aplicación falle.
 
 ## Requisitos Previos
 

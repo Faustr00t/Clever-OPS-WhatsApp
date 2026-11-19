@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const fs = require('fs');
@@ -5,6 +6,7 @@ const { Server } = require('socket.io');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const path = require('path');
+const { summaryService } = require('./services/summary');
 
 const app = express();
 const server = http.createServer(app);
@@ -96,9 +98,56 @@ let client = null;
 let closingClient = false;
 
 /**
+ * Resuelve de forma inteligente el nombre legible de un chat o contacto,
+ * evitando identificadores internos como @lid o IDs numéricos anónimos.
+ */
+async function resolveChatDisplayName(chat) {
+    let name = chat.name || chat.formattedTitle || '';
+
+    // Si el nombre contiene @lid, es puramente numérico o está vacío
+    const isLid = !name || name.includes('@lid') || (chat.id && chat.id._serialized && chat.id._serialized.includes('@lid'));
+
+    if (isLid || !name || name === chat.id?.user) {
+        try {
+            // Intentar obtener el objeto Contacto de WhatsApp para extraer pushname o número
+            const contact = await chat.getContact().catch(() => null);
+            if (contact) {
+                name = contact.name || contact.pushname || contact.formattedNumber || contact.number || '';
+            }
+        } catch (_) {
+            // Fallback silencioso si no se puede resolver el contacto
+        }
+    }
+
+    // Si aún contiene @lid o es una cadena numérica larga de LID
+    if (!name || name.includes('@lid') || (/^\d{12,}$/.test(name) && chat.id?._serialized?.includes('@lid'))) {
+        if (chat.isGroup) {
+            name = (chat.name && !chat.name.includes('@lid')) ? chat.name : 'Grupo de WhatsApp';
+        } else if (chat.id?.server === 'c.us' && chat.id?.user) {
+            // Número telefónico tradicional pero sin nombre en agenda
+            name = `+${chat.id.user}`;
+        } else {
+            name = 'Usuario de WhatsApp';
+        }
+    }
+
+    return name;
+}
+
+/**
  * Normaliza y formatea un objeto de mensaje para el frontend
  */
 function formatMessage(msg) {
+    let authorName = msg.author || null;
+
+    // Si el autor es un identificador @lid, intentar usar el nombre público (notifyName)
+    if (authorName && authorName.includes('@lid')) {
+        authorName = msg._data?.notifyName || null;
+    } else if (authorName && authorName.includes('@c.us')) {
+        const userNumber = authorName.split('@')[0];
+        authorName = msg._data?.notifyName || `+${userNumber}`;
+    }
+
     return {
         id: msg.id ? (msg.id._serialized || msg.id.id) : String(Date.now()),
         chatId: msg.fromMe ? msg.to : msg.from,
@@ -110,7 +159,7 @@ function formatMessage(msg) {
         mediaFilename: msg._data?.filename || null,
         type: msg.type,
         timestamp: msg.timestamp ? msg.timestamp * 1000 : Date.now(),
-        author: msg.author || null
+        author: authorName
     };
 }
 
@@ -118,7 +167,7 @@ function formatMessage(msg) {
  * Normaliza y formatea la lista de chats para el frontend
  */
 async function formatChats(rawChats) {
-    return rawChats.map(chat => {
+    const formatted = await Promise.all(rawChats.map(async (chat) => {
         let lastMessageText = '';
         let lastMessageTime = null;
 
@@ -129,15 +178,19 @@ async function formatChats(rawChats) {
             }
         }
 
+        const resolvedName = await resolveChatDisplayName(chat);
+
         return {
             id: chat.id._serialized,
-            name: chat.name || chat.formattedTitle || chat.id.user || 'Desconocido',
+            name: resolvedName,
             isGroup: chat.isGroup,
             unreadCount: chat.unreadCount || 0,
             timestamp: lastMessageTime || (chat.timestamp ? chat.timestamp * 1000 : Date.now()),
             lastMessage: lastMessageText
         };
-    }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    }));
+
+    return formatted.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 }
 
 /**
@@ -422,6 +475,56 @@ io.on('connection', async (socket) => {
         }
     });
 
+    // Generar resumen con la capa de abstracción SummaryService
+    socket.on('generate_summary', async (data, acknowledge) => {
+        try {
+            let messages = data?.messages;
+
+            // Si el cliente no pasó mensajes directamente pero proporcionó chatId, intentar leerlos del chat
+            if ((!Array.isArray(messages) || messages.length === 0) && data?.chatId && client && connectionState.status === 'connected') {
+                const chat = await client.getChatById(data.chatId);
+                const rawMessages = await chat.fetchMessages({ limit: 50 });
+                const chatDisplayName = await resolveChatDisplayName(chat);
+                messages = rawMessages.map(m => {
+                    let senderName = 'Contacto';
+                    if (m.fromMe) {
+                        senderName = 'Tú';
+                    } else if (m._data?.notifyName) {
+                        senderName = m._data.notifyName;
+                    } else if (m.author && !m.author.includes('@lid')) {
+                        senderName = m.author.split('@')[0];
+                    } else {
+                        senderName = chatDisplayName;
+                    }
+                    return {
+                        sender: senderName,
+                        content: m.body || (m.hasMedia ? '[Multimedia]' : '')
+                    };
+                }).filter(m => m.content.trim().length > 0);
+            }
+
+            if (!Array.isArray(messages) || messages.length === 0) {
+                return acknowledge?.({
+                    ok: false,
+                    error: 'No se encontraron mensajes en esta conversación para generar el resumen.'
+                });
+            }
+
+            const summary = await summaryService.generateSummary(messages);
+            acknowledge?.({
+                ok: true,
+                summary,
+                provider: summaryService.getProviderName()
+            });
+        } catch (err) {
+            console.error('Error generando resumen:', err);
+            acknowledge?.({
+                ok: false,
+                error: err.message || 'Error al generar el resumen de la conversación'
+            });
+        }
+    });
+
     // Desconectar sesión manualmente
     socket.on('disconnect_session', async () => {
         const whatsappClient = client;
@@ -457,6 +560,20 @@ io.on('connection', async (socket) => {
 // Rutas API REST alternativas de apoyo
 app.get('/api/status', (req, res) => {
     res.json(connectionState);
+});
+
+// Endpoint REST alternativo para generación de resúmenes
+app.post('/api/summary', async (req, res) => {
+    try {
+        const { messages } = req.body;
+        if (!Array.isArray(messages)) {
+            return res.status(400).json({ ok: false, error: 'El cuerpo debe incluir un arreglo de mensajes: [{ sender, content }]' });
+        }
+        const summary = await summaryService.generateSummary(messages);
+        res.json({ ok: true, summary, provider: summaryService.getProviderName() });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+    }
 });
 
 server.listen(PORT, () => {

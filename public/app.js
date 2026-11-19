@@ -5,6 +5,7 @@ const socket = io();
 let currentStatus = 'disconnected';
 let chats = [];
 let activeChatId = null;
+let currentChatMessages = [];
 
 // Elementos del DOM
 const statusDot = document.getElementById('status-dot');
@@ -34,6 +35,22 @@ const qrSpinner = document.getElementById('qr-spinner');
 const qrStatusMsg = document.getElementById('qr-status-msg');
 const btnCloseQr = document.getElementById('btn-close-qr');
 
+// Elementos del Modal de Resumen con IA
+const btnGenerateSummary = document.getElementById('btn-generate-summary');
+const summaryModal = document.getElementById('summary-modal');
+const btnCloseSummary = document.getElementById('btn-close-summary');
+const summaryLoading = document.getElementById('summary-loading');
+const summaryContent = document.getElementById('summary-content');
+const summaryError = document.getElementById('summary-error');
+const summaryProviderName = document.getElementById('summary-provider-name');
+const summaryProviderTag = document.getElementById('summary-provider-tag');
+const summaryTopic = document.getElementById('summary-topic');
+const summaryParticipants = document.getElementById('summary-participants');
+const summaryPending = document.getElementById('summary-pending');
+const summaryDate = document.getElementById('summary-date');
+const summaryRawText = document.getElementById('summary-raw-text');
+const btnCopySummary = document.getElementById('btn-copy-summary');
+
 /**
  * Formatea una marca de tiempo en formato legible para chats (HH:mm o fecha)
  */
@@ -61,8 +78,10 @@ function formatTime(timestamp) {
  * Obtiene iniciales para el avatar
  */
 function getInitials(name) {
-    if (!name) return '?';
-    const words = name.trim().split(/\s+/);
+    if (!name || name.includes('@lid')) return '👤';
+    const cleanName = name.replace(/[^a-zA-Z0-9\sáéíóúÁÉÍÓÚñÑ+]/g, '').trim();
+    if (!cleanName) return '👤';
+    const words = cleanName.split(/\s+/);
     if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
     return (words[0][0] + words[1][0]).toUpperCase();
 }
@@ -207,6 +226,7 @@ function renderChats() {
  */
 function selectChat(chat) {
     activeChatId = chat.id;
+    currentChatMessages = [];
     sendError.textContent = '';
 
     // Actualizar clase activa en la lista
@@ -323,6 +343,7 @@ socket.on('chats_list', (newChats) => {
 // Lista de mensajes de la conversación activa
 socket.on('messages_list', (data) => {
     if (data.chatId === activeChatId) {
+        currentChatMessages = data.messages || [];
         renderMessages(data.messages);
     }
 });
@@ -333,6 +354,7 @@ socket.on('new_message', (msg) => {
 
     // Si el mensaje pertenece a la conversación abierta actualmente
     if (activeChatId && (msg.chatId === activeChatId || msg.from === activeChatId || msg.to === activeChatId)) {
+        currentChatMessages.push(msg);
         appendMessageBubble(msg, true);
     }
 });
@@ -445,3 +467,104 @@ btnCloseQr.addEventListener('click', () => {
 searchInput.addEventListener('input', () => {
     renderChats();
 });
+
+/* =====================================
+   INTERACCIONES: RESUMEN CON IA
+   ===================================== */
+
+// Botón para generar resumen de la conversación activa
+if (btnGenerateSummary) {
+    btnGenerateSummary.addEventListener('click', () => {
+        if (!activeChatId) return;
+
+        // Mostrar modal en estado de carga
+        summaryModal.classList.remove('hidden');
+        summaryLoading.classList.remove('hidden');
+        summaryContent.classList.add('hidden');
+        summaryError.classList.add('hidden');
+
+        // Normalizar los mensajes en el formato requerido: [{ sender, content }]
+        const messagesForSummary = currentChatMessages.map(msg => {
+            let sender = 'Participante';
+            if (msg.fromMe) {
+                sender = 'Tú';
+            } else if (msg.author && !msg.author.includes('@lid')) {
+                sender = msg.author;
+            } else if (chatHeaderName.textContent && !chatHeaderName.textContent.includes('@lid')) {
+                sender = chatHeaderName.textContent;
+            }
+            return {
+                sender,
+                content: msg.body || ''
+            };
+        }).filter(m => m.content.trim().length > 0);
+
+        // Solicitar resumen al servicio a través de Socket.io
+        socket.emit('generate_summary', { 
+            chatId: activeChatId, 
+            messages: messagesForSummary 
+        }, (res) => {
+            summaryLoading.classList.add('hidden');
+
+            if (res && res.ok && res.summary) {
+                summaryContent.classList.remove('hidden');
+                summaryProviderName.textContent = res.provider || 'MockSummaryProvider';
+                if (summaryProviderTag) {
+                    if (res.provider === 'GeminiProvider') {
+                        summaryProviderTag.textContent = 'Google Gemini (Real)';
+                        summaryProviderTag.className = 'badge-tag badge-tag-gemini';
+                    } else {
+                        summaryProviderTag.textContent = 'Simulado';
+                        summaryProviderTag.className = 'badge-tag';
+                    }
+                }
+                summaryTopic.textContent = res.summary.topic || '-';
+                
+                const participantsList = Array.isArray(res.summary.participants)
+                    ? res.summary.participants.join(', ')
+                    : (res.summary.participants || '-');
+                summaryParticipants.textContent = participantsList;
+
+                summaryPending.textContent = res.summary.pendingTasks || '-';
+                summaryDate.textContent = res.summary.detectedDates || '-';
+                summaryRawText.textContent = res.summary.solutions || res.summary.rawSummary || '';
+            } else {
+                summaryError.classList.remove('hidden');
+                summaryError.textContent = res?.error || 'No se pudo generar el resumen en este momento.';
+            }
+        });
+    });
+}
+
+// Botón para cerrar modal de resumen
+if (btnCloseSummary) {
+    btnCloseSummary.addEventListener('click', () => {
+        summaryModal.classList.add('hidden');
+    });
+}
+
+// Botón para copiar el resumen generado al portapapeles
+if (btnCopySummary) {
+    btnCopySummary.addEventListener('click', async () => {
+        const fullSummaryToCopy = [
+            `📌 Tema principal: ${summaryTopic.textContent}`,
+            `👥 Participantes: ${summaryParticipants.textContent}`,
+            `📋 Pendientes: ${summaryPending.textContent}`,
+            `📅 Fecha detectada: ${summaryDate.textContent}`,
+            `\n💡 Posibles soluciones:\n${summaryRawText.textContent}`
+        ].join('\n');
+
+        if (!fullSummaryToCopy.trim()) return;
+
+        try {
+            await navigator.clipboard.writeText(fullSummaryToCopy);
+            const originalText = btnCopySummary.textContent;
+            btnCopySummary.textContent = '✅ ¡Copiado!';
+            setTimeout(() => {
+                btnCopySummary.textContent = originalText;
+            }, 2000);
+        } catch (err) {
+            console.error('Error al copiar:', err);
+        }
+    });
+}

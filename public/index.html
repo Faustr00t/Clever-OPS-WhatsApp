@@ -99,6 +99,12 @@
                                 <span class="contact-status" id="chat-header-status">WhatsApp</span>
                             </div>
                         </div>
+                        <div class="conversation-actions">
+                            <button id="btn-generate-summary" class="btn-summary" title="Generar resumen de la conversación">
+                                <span class="btn-icon-ai">✨</span>
+                                <span>Generar resumen</span>
+                            </button>
+                        </div>
                     </header>
 
                     <!-- Contenedor de mensajes con scroll -->
@@ -145,6 +151,67 @@
                     </div>
                     <img id="qr-image" class="hidden" alt="Código QR WhatsApp" />
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE RESUMEN CON IA (CAPA DE ABSTRACCIÓN) -->
+    <div class="modal-overlay hidden" id="summary-modal">
+        <div class="modal-card summary-card">
+            <div class="modal-header">
+                <div class="summary-header-title">
+                    <span class="ai-sparkle">✨</span>
+                    <h3>Resumen de la Conversación</h3>
+                </div>
+                <button class="btn-close" id="btn-close-summary" title="Cerrar">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Estado de carga -->
+                <div class="summary-loading hidden" id="summary-loading">
+                    <div class="spinner"></div>
+                    <p>Analizando mensajes y generando resumen...</p>
+                </div>
+
+                <!-- Contenido del resumen -->
+                <div class="summary-content" id="summary-content">
+                    <div class="summary-provider-badge">
+                        <span>Proveedor de IA:</span>
+                        <strong id="summary-provider-name">MockSummaryProvider</strong>
+                        <span class="badge-tag" id="summary-provider-tag">Simulado</span>
+                    </div>
+
+                    <div class="summary-result-card" id="summary-result-card">
+                        <div class="summary-row">
+                            <span class="summary-label">📌 Tema principal:</span>
+                            <span class="summary-value" id="summary-topic">-</span>
+                        </div>
+                        <div class="summary-row">
+                            <span class="summary-label">👥 Participantes:</span>
+                            <span class="summary-value" id="summary-participants">-</span>
+                        </div>
+                        <div class="summary-row">
+                            <span class="summary-label">📋 Pendientes:</span>
+                            <span class="summary-value" id="summary-pending">-</span>
+                        </div>
+                        <div class="summary-row">
+                            <span class="summary-label">📅 Fecha detectada:</span>
+                            <span class="summary-value" id="summary-date">-</span>
+                        </div>
+                    </div>
+
+                    <div class="summary-raw-container">
+                        <span class="summary-raw-title">💡 Posibles soluciones:</span>
+                        <pre class="summary-raw-text" id="summary-raw-text"></pre>
+                    </div>
+                </div>
+
+                <!-- Mensaje de error -->
+                <div class="summary-error hidden" id="summary-error"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-copy-summary" class="btn-secondary" title="Copiar resumen al portapapeles">
+                    📋 Copiar resumen
+                </button>
             </div>
         </div>
     </div>
