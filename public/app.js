@@ -148,9 +148,20 @@ function showQRModal(qrCodeUrl, customMsg) {
     qrModal.classList.remove('hidden');
     const qrProgressFill = document.getElementById('qr-progress-fill');
     if (qrCodeUrl) {
-        if (qrImage.getAttribute('src') !== qrCodeUrl) qrImage.src = qrCodeUrl;
-        qrImage.classList.remove('hidden');
-        qrSpinner.classList.add('hidden');
+        qrImage.onload = () => {
+            qrImage.classList.remove('hidden');
+            qrSpinner.classList.add('hidden');
+        };
+        qrImage.onerror = () => {
+            qrImage.classList.add('hidden');
+            qrSpinner.classList.remove('hidden');
+            qrStatusMsg.textContent = 'No se pudo cargar el código QR. Intenta conectar de nuevo.';
+        };
+        if (qrImage.getAttribute('src') !== qrCodeUrl || !qrImage.complete || !qrImage.naturalWidth) {
+            qrImage.src = qrCodeUrl;
+        } else {
+            qrImage.onload();
+        }
     } else {
         qrImage.classList.add('hidden');
         qrSpinner.classList.remove('hidden');
