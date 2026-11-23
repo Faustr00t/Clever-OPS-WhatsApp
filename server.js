@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { summaryService } = require('./services/summary');
 
 const app = express();
@@ -15,7 +16,7 @@ const io = new Server(server, { maxHttpBufferSize: 12 * 1024 * 1024 });
 const PORT = process.env.PORT || 3000;
 // shortcut: archivos de hasta 8 MB; para archivos mayores, migrar a carga HTTP por streaming.
 const MAX_MEDIA_SIZE = 8 * 1024 * 1024;
-const authDataPath = path.join(__dirname, '.wwebjs_auth');
+const authDataPath = process.env.WHATSAPP_AUTH_PATH || path.join(__dirname, '.wwebjs_auth');
 const authSessionPath = path.join(authDataPath, 'session');
 const instanceLockPath = path.join(authDataPath, 'instance.lock');
 let ownsInstanceLock = false;
@@ -23,6 +24,16 @@ let ownsInstanceLock = false;
 class SessionSafeLocalAuth extends LocalAuth {
     // Se elimina el perfil desde la app después de cerrar Chromium.
     async logout() {}
+}
+
+function getWhatsAppUserAgent() {
+    try {
+        const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium';
+        const version = execFileSync(chromiumPath, ['--version'], { encoding: 'utf8' }).match(/\d+\.\d+\.\d+\.\d+/)?.[0];
+        if (version) return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`;
+    } catch (err) {
+        console.warn('No se pudo detectar la versión de Chromium; se usará el agente predeterminado de whatsapp-web.js:', err.message);
+    }
 }
 
 function acquireInstanceLock() {
@@ -243,7 +254,8 @@ function initWhatsAppClient() {
         }),
         authTimeoutMs: 180000,
         qrMaxRetries: 10,
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        webVersionCache: { type: 'none' },
+        userAgent: getWhatsAppUserAgent(),
         puppeteer: {
             headless: true,
             timeout: 180000,
@@ -278,18 +290,23 @@ function initWhatsAppClient() {
     // Evento: Progreso de carga interna de WhatsApp Web
     whatsappClient.on('loading_screen', (percent, message) => {
         console.log(`[WhatsApp Web] Cargando: ${percent}% - ${message || 'Iniciando'}`);
+        if (percent >= 100 && !connectionState.qrCode) {
+            connectionState.message = 'WhatsApp Web cargado; esperando el código QR...';
+            io.emit('status_change', connectionState);
+        }
         io.emit('loading_progress', { percent, message });
     });
 
     // Evento: Generación de código QR
     whatsappClient.on('qr', async (qr) => {
-        console.log('Código QR recibido con éxito');
+        console.log('Evento QR recibido; generando imagen...');
         try {
             const qrDataUrl = await qrcode.toDataURL(qr, { width: 280, margin: 2 });
             connectionState.status = 'connecting';
             connectionState.qrCode = qrDataUrl;
             delete connectionState.message;
             delete connectionState.error;
+            console.log('Imagen QR generada y enviada a los clientes');
             io.emit('status_change', connectionState);
         } catch (err) {
             console.error('Error generando imagen QR:', err);
@@ -389,7 +406,7 @@ function initWhatsAppClient() {
     whatsappClient.initialize().catch(async err => {
         if (client !== whatsappClient) return;
         closingClient = true;
-        console.error('Error al inicializar cliente:', err);
+        console.error('Error al inicializar cliente de WhatsApp/Chromium:', err);
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
         io.emit('status_change', { ...connectionState, error: err.message });

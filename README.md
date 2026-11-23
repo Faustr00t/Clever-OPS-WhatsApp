@@ -82,3 +82,10 @@ El proyecto incluye integración directa con **Google Gemini** para resumir conv
    - Aparecerá el modal con el código QR.
    - Desde tu teléfono: Abre **WhatsApp** > **Dispositivos vinculados** > **Vincular un dispositivo** y escanea el código QR de la pantalla.
    - Una vez vinculado, el indicador cambiará a 🟢 **Conectado**, se listarán tus conversaciones y podrás hacer clic en cualquiera de ellas para ver sus mensajes.
+
+## Despliegue en Render
+
+- Despliega como **Web Service** usando el `Dockerfile` del repositorio, que instala Chromium y configura Puppeteer para usarlo.
+- Para conservar la sesion entre reinicios y despliegues, agrega un disco persistente montado en `/var/data` y define `WHATSAPP_AUTH_PATH=/var/data/.wwebjs_auth` en las variables de entorno. Sin disco persistente, Render borra la sesion y tendras que volver a vincular WhatsApp.
+- Los servicios gratuitos de Render se suspenden tras un periodo sin trafico. Al reactivarse, espera a que el servicio termine de iniciar antes de pulsar **Conectar**.
+- En los registros, `Evento QR recibido` confirma que WhatsApp entrego el QR; `Imagen QR generada` confirma que el servidor lo envio al navegador. Si solo aparece que espera el QR, revisa el error de Chromium o inicializacion que aparezca despues.
