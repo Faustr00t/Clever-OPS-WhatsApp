@@ -241,9 +241,12 @@ function initWhatsAppClient() {
         authStrategy: new SessionSafeLocalAuth({
             dataPath: authDataPath
         }),
+        authTimeoutMs: 180000,
+        qrMaxRetries: 5,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         puppeteer: {
             headless: true,
+            timeout: 180000,
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox',
