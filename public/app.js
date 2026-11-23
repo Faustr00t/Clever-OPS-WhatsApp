@@ -507,7 +507,7 @@ messageForm.addEventListener('submit', (event) => {
 
 // Botón de Conectar
 btnConnect.addEventListener('click', () => {
-    showQRModal(null, 'Iniciando cliente de WhatsApp...');
+    showQRModal(null, 'Iniciando navegador y generando código QR...');
     socket.emit('start_connection');
 });
 

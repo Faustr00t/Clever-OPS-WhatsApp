@@ -241,6 +241,7 @@ function initWhatsAppClient() {
         authStrategy: new SessionSafeLocalAuth({
             dataPath: authDataPath
         }),
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         puppeteer: {
             headless: true,
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -248,13 +249,22 @@ function initWhatsAppClient() {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
                 '--no-first-run',
                 '--no-zygote',
                 '--disable-gpu',
                 '--disable-extensions',
                 '--disable-default-apps',
-                '--mute-audio'
+                '--mute-audio',
+                '--disable-background-networking',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-breakpad',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
+                '--disable-ipc-flooding-protection',
+                '--disable-renderer-backgrounding',
+                '--force-color-profile=srgb',
+                '--metrics-recording-only'
             ]
         }
     });
