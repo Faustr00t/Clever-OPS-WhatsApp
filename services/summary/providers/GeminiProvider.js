@@ -32,7 +32,7 @@ class GeminiProvider extends SummaryProvider {
                 participants: [],
                 pendingTasks: "No se identificaron tareas pendientes.",
                 detectedDates: "No especificada",
-                solutions: "• No hay mensajes para sugerir soluciones.",
+                stoppers: [],
                 rawSummary: "No hay mensajes suficientes en la conversación para generar un resumen."
             };
         }
@@ -50,7 +50,7 @@ Extrae:
 2. "participants": Lista con los nombres de las personas que participaron activamente.
 3. "pendingTasks": Las tareas, compromisos o acciones pendientes que quedaron acordadas.
 4. "detectedDates": Plazos, días o fechas específicas mencionadas (si no hay, indica "No especificada").
-5. "solutions": Entre 2 y 4 posibles soluciones, sugerencias prácticas o pasos a seguir recomendados por la IA basados en la conversación. Cada solución debe empezar con viñeta "• ".
+5. "stoppers": Lista de problemas concretos mencionados en la conversación que bloquean o impiden avanzar. No incluyas recomendaciones ni riesgos hipotéticos. Ordena primero los que bloquean más trabajo. Si no hay ninguno, devuelve una lista vacía.
 
 Conversación a analizar:
 ${formattedChat}`;
@@ -72,9 +72,9 @@ ${formattedChat}`;
                             },
                             pendingTasks: { type: 'string', description: 'Acciones o tareas pendientes' },
                             detectedDates: { type: 'string', description: 'Fechas o plazos detectados' },
-                            solutions: { type: 'string', description: 'Posibles soluciones o recomendaciones con viñetas' }
+                            stoppers: { type: 'array', items: { type: 'string' }, description: 'Problemas concretos que bloquean el avance, ordenados por impacto' }
                         },
-                        required: ['topic', 'participants', 'pendingTasks', 'detectedDates', 'solutions']
+                        required: ['topic', 'participants', 'pendingTasks', 'detectedDates', 'stoppers']
                     }
                 }
             });
@@ -86,14 +86,14 @@ ${formattedChat}`;
             const participants = Array.isArray(parsed.participants) ? parsed.participants : [];
             const pendingTasks = parsed.pendingTasks || 'Ninguno especificado';
             const detectedDates = parsed.detectedDates || 'No especificada';
-            const solutions = parsed.solutions || '• Dar seguimiento a los puntos tratados.';
+            const stoppers = Array.isArray(parsed.stoppers) ? parsed.stoppers.filter(item => typeof item === 'string' && item.trim()) : [];
 
             const rawSummary = [
                 `Tema principal: ${topic}`,
                 `Participantes: ${participants.join(', ')}`,
                 `Pendientes: ${pendingTasks}`,
                 `Fecha detectada: ${detectedDates}`,
-                `\nPosibles soluciones:\n${solutions}`
+                `\nStoppers:\n${stoppers.length ? stoppers.map((item, index) => `${index + 1}. ${item}`).join('\n') : 'Hurra, no hay Stoppers. Por ahora'}`
             ].join('\n');
 
             return {
@@ -101,7 +101,7 @@ ${formattedChat}`;
                 participants,
                 pendingTasks,
                 detectedDates,
-                solutions,
+                stoppers,
                 rawSummary
             };
         } catch (error) {

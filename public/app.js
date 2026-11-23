@@ -6,6 +6,10 @@ let currentStatus = 'disconnected';
 let chats = [];
 let activeChatId = null;
 let currentChatMessages = [];
+let messagesLoadingChatId = null;
+let hasOlderMessages = false;
+let olderMessagesLoading = false;
+let summaryInFlight = false;
 
 // Elementos del DOM
 const statusDot = document.getElementById('status-dot');
@@ -143,7 +147,7 @@ function updateConnectionUI(state) {
 function showQRModal(qrCodeUrl, customMsg) {
     qrModal.classList.remove('hidden');
     if (qrCodeUrl) {
-        qrImage.src = qrCodeUrl;
+        if (qrImage.getAttribute('src') !== qrCodeUrl) qrImage.src = qrCodeUrl;
         qrImage.classList.remove('hidden');
         qrSpinner.classList.add('hidden');
     } else {
@@ -193,7 +197,7 @@ function renderChats() {
         return;
     }
 
-    chatListContainer.innerHTML = '';
+    const fragment = document.createDocumentFragment();
     filteredChats.forEach(chat => {
         const item = document.createElement('div');
         item.className = `chat-item ${chat.id === activeChatId ? 'active' : ''}`;
@@ -216,15 +220,19 @@ function renderChats() {
             </div>
         `;
 
-        item.addEventListener('click', () => selectChat(chat));
-        chatListContainer.appendChild(item);
+        fragment.appendChild(item);
     });
+    chatListContainer.replaceChildren(fragment);
 }
 
 /**
  * Selecciona una conversación y carga sus mensajes
  */
 function selectChat(chat) {
+    if (messagesLoadingChatId === chat.id) return;
+    messagesLoadingChatId = chat.id;
+    hasOlderMessages = false;
+    olderMessagesLoading = false;
     activeChatId = chat.id;
     currentChatMessages = [];
     sendError.textContent = '';
@@ -251,12 +259,17 @@ function selectChat(chat) {
  * Renderiza los mensajes dentro de la conversación activa
  */
 function renderMessages(messages) {
+    messagesContainer.innerHTML = '';
+
     if (!messages || messages.length === 0) {
-        messagesContainer.innerHTML = '<div class="messages-loading">No hay mensajes recientes en esta conversación.</div>';
+        const empty = document.createElement('div');
+        empty.className = 'messages-loading';
+        empty.textContent = 'No hay mensajes recientes en esta conversación.';
+        messagesContainer.appendChild(empty);
         return;
     }
 
-    messagesContainer.innerHTML = '';
+    updateOlderMessagesButton();
     messages.forEach(msg => {
         appendMessageBubble(msg, false);
     });
@@ -265,10 +278,32 @@ function renderMessages(messages) {
     scrollToBottom();
 }
 
+function updateOlderMessagesButton() {
+    let button = messagesContainer.querySelector('.load-older-messages');
+    if (!hasOlderMessages) {
+        button?.remove();
+        return;
+    }
+    if (!button) {
+        button = document.createElement('button');
+        button.className = 'load-older-messages';
+        button.addEventListener('click', () => {
+            if (olderMessagesLoading || !activeChatId) return;
+            olderMessagesLoading = true;
+            button.disabled = true;
+            button.textContent = 'Cargando mensajes anteriores...';
+            socket.emit('load_older_messages', { chatId: activeChatId, offset: currentChatMessages.length });
+        });
+        messagesContainer.prepend(button);
+    }
+    button.disabled = olderMessagesLoading;
+    button.textContent = olderMessagesLoading ? 'Cargando mensajes anteriores...' : 'Cargar mensajes anteriores';
+}
+
 /**
  * Añade una burbuja de mensaje individual al contenedor
  */
-function appendMessageBubble(msg, shouldScroll = true) {
+function appendMessageBubble(msg, shouldScroll = true, prepend = false) {
     const isOut = msg.fromMe;
     const bubble = document.createElement('div');
     bubble.className = `message-bubble ${isOut ? 'message-out' : 'message-in'}`;
@@ -286,7 +321,12 @@ function appendMessageBubble(msg, shouldScroll = true) {
         </div>
     `;
 
-    messagesContainer.appendChild(bubble);
+    if (prepend) {
+        const firstMessage = messagesContainer.querySelector('.message-bubble');
+        messagesContainer.insertBefore(bubble, firstMessage || null);
+    } else {
+        messagesContainer.appendChild(bubble);
+    }
 
     if (msg.hasMedia) {
         const loadMedia = document.createElement('button');
@@ -342,10 +382,33 @@ socket.on('chats_list', (newChats) => {
 
 // Lista de mensajes de la conversación activa
 socket.on('messages_list', (data) => {
+    if (data.chatId === messagesLoadingChatId) messagesLoadingChatId = null;
     if (data.chatId === activeChatId) {
         currentChatMessages = data.messages || [];
+        hasOlderMessages = Boolean(data.hasMore);
         renderMessages(data.messages);
     }
+});
+
+socket.on('older_messages', (data) => {
+    if (data.chatId !== activeChatId) return;
+    olderMessagesLoading = false;
+    if (data.error) {
+        updateOlderMessagesButton();
+        const button = messagesContainer.querySelector('.load-older-messages');
+        if (button) button.textContent = 'Reintentar mensajes anteriores';
+        return;
+    }
+
+    const oldHeight = messagesContainer.scrollHeight;
+    const oldScrollTop = messagesContainer.scrollTop;
+    const knownIds = new Set(currentChatMessages.map(message => message.id));
+    const olderMessages = (data.messages || []).filter(message => !knownIds.has(message.id));
+    currentChatMessages = [...olderMessages, ...currentChatMessages];
+    hasOlderMessages = Boolean(data.hasMore);
+    olderMessages.slice().reverse().forEach(message => appendMessageBubble(message, false, true));
+    updateOlderMessagesButton();
+    messagesContainer.scrollTop = oldScrollTop + messagesContainer.scrollHeight - oldHeight;
 });
 
 // Nuevo mensaje entrante o saliente en tiempo real
@@ -354,8 +417,10 @@ socket.on('new_message', (msg) => {
 
     // Si el mensaje pertenece a la conversación abierta actualmente
     if (activeChatId && (msg.chatId === activeChatId || msg.from === activeChatId || msg.to === activeChatId)) {
-        currentChatMessages.push(msg);
-        appendMessageBubble(msg, true);
+        if (!currentChatMessages.some(message => message.id === msg.id)) {
+            currentChatMessages.push(msg);
+            appendMessageBubble(msg, true);
+        }
     }
 });
 
@@ -468,6 +533,13 @@ searchInput.addEventListener('input', () => {
     renderChats();
 });
 
+chatListContainer.addEventListener('click', (event) => {
+    const item = event.target.closest('.chat-item');
+    if (!item) return;
+    const chat = chats.find(candidate => candidate.id === item.dataset.chatId);
+    if (chat) selectChat(chat);
+});
+
 /* =====================================
    INTERACCIONES: RESUMEN CON IA
    ===================================== */
@@ -475,7 +547,10 @@ searchInput.addEventListener('input', () => {
 // Botón para generar resumen de la conversación activa
 if (btnGenerateSummary) {
     btnGenerateSummary.addEventListener('click', () => {
-        if (!activeChatId) return;
+        if (!activeChatId || summaryInFlight) return;
+        summaryInFlight = true;
+        btnGenerateSummary.disabled = true;
+        summaryLoading.querySelector('p').textContent = 'Generando resumen...';
 
         // Mostrar modal en estado de carga
         summaryModal.classList.remove('hidden');
@@ -504,6 +579,8 @@ if (btnGenerateSummary) {
             chatId: activeChatId, 
             messages: messagesForSummary 
         }, (res) => {
+            summaryInFlight = false;
+            btnGenerateSummary.disabled = false;
             summaryLoading.classList.add('hidden');
 
             if (res && res.ok && res.summary) {
@@ -527,7 +604,14 @@ if (btnGenerateSummary) {
 
                 summaryPending.textContent = res.summary.pendingTasks || '-';
                 summaryDate.textContent = res.summary.detectedDates || '-';
-                summaryRawText.textContent = res.summary.solutions || res.summary.rawSummary || '';
+                summaryRawText.replaceChildren();
+                const stoppers = Array.isArray(res.summary.stoppers) ? res.summary.stoppers : [];
+                summaryRawText.parentElement.classList.toggle('summary-clear', stoppers.length === 0);
+                (stoppers.length ? stoppers : ['Hurra, no hay Stoppers. Por ahora']).forEach(stopper => {
+                    const item = document.createElement('li');
+                    item.textContent = stopper;
+                    summaryRawText.appendChild(item);
+                });
             } else {
                 summaryError.classList.remove('hidden');
                 summaryError.textContent = res?.error || 'No se pudo generar el resumen en este momento.';
@@ -551,7 +635,7 @@ if (btnCopySummary) {
             `👥 Participantes: ${summaryParticipants.textContent}`,
             `📋 Pendientes: ${summaryPending.textContent}`,
             `📅 Fecha detectada: ${summaryDate.textContent}`,
-            `\n💡 Posibles soluciones:\n${summaryRawText.textContent}`
+            `\n⛔ Stoppers:\n${Array.from(summaryRawText.children, (item, index) => `${index + 1}. ${item.textContent}`).join('\n')}`
         ].join('\n');
 
         if (!fullSummaryToCopy.trim()) return;

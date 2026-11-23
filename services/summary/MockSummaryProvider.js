@@ -49,39 +49,14 @@ class MockSummaryProvider extends SummaryProvider {
             date = 'No especificada';
         }
 
-        let solutions = '';
-        if (topic.includes('reporte')) {
-            solutions = [
-                '• Definir el formato del reporte (PDF/Excel) y los indicadores clave a incluir.',
-                '• Compartir un borrador previo hoy por la tarde para evitar correcciones de último minuto.',
-                '• Fijar una hora límite de entrega mañana para la revisión final del equipo.'
-            ].join('\n');
-        } else if (topic.includes('reunión')) {
-            solutions = [
-                '• Enviar invitación de calendario con enlace de videollamada y orden del día.',
-                '• Confirmar disponibilidad de los participantes con 1 hora de anticipación.',
-                '• Designar a un responsable para registrar la minuta y acuerdos al finalizar.'
-            ].join('\n');
-        } else if (topic.includes('pagos')) {
-            solutions = [
-                '• Validar los datos fiscales y número de cuenta antes de ejecutar la transacción.',
-                '• Compartir el comprobante en este chat para agilizar la conciliación contable.',
-                '• Registrar la fecha de pago en el calendario para evitar recargos.'
-            ].join('\n');
-        } else {
-            solutions = [
-                '• Asignar un responsable directo para el seguimiento de los acuerdos tratados.',
-                '• Acordar un plazo de respuesta claro entre los participantes involucrados.',
-                '• Notificar en este chat en cuanto se complete la siguiente acción acordada.'
-            ].join('\n');
-        }
+        const stoppers = [];
 
         const rawSummary = [
             `Tema principal: ${topic}.`,
             `Participantes: ${participantsStr}.`,
             `Pendientes: ${pending}.`,
             `Fecha detectada: ${date}.`,
-            `\nPosibles soluciones:\n${solutions}`
+            `\nStoppers:\nHurra, no hay Stoppers. Por ahora`
         ].join('\n');
 
         return {
@@ -89,7 +64,7 @@ class MockSummaryProvider extends SummaryProvider {
             participants: uniqueSenders,
             pendingTasks: pending,
             detectedDates: date,
-            solutions,
+            stoppers,
             rawSummary
         };
     }

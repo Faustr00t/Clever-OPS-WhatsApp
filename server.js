@@ -96,6 +96,7 @@ let connectionState = {
 
 let client = null;
 let closingClient = false;
+let chatRefreshTimer = null;
 
 /**
  * Resuelve de forma inteligente el nombre legible de un chat o contacto,
@@ -191,6 +192,19 @@ async function formatChats(rawChats) {
     }));
 
     return formatted.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+}
+
+function scheduleChatListRefresh(whatsappClient) {
+    clearTimeout(chatRefreshTimer);
+    chatRefreshTimer = setTimeout(async () => {
+        if (client !== whatsappClient || connectionState.status !== 'connected') return;
+        try {
+            const formatted = await formatChats(await whatsappClient.getChats());
+            if (client === whatsappClient && connectionState.status === 'connected') io.emit('chats_list', formatted);
+        } catch (err) {
+            console.error('Error actualizando conversaciones:', err);
+        }
+    }, 250);
 }
 
 /**
@@ -339,10 +353,7 @@ function initWhatsAppClient() {
             const formattedMsg = formatMessage(msg);
             io.emit('new_message', formattedMsg);
 
-            // Refrescar y emitir lista de chats actualizada para reflejar orden y último mensaje
-            const rawChats = await whatsappClient.getChats();
-            const formatted = await formatChats(rawChats);
-            io.emit('chats_list', formatted);
+            scheduleChatListRefresh(whatsappClient);
         } catch (err) {
             console.error('Error procesando nuevo mensaje:', err);
         }
@@ -414,12 +425,37 @@ io.on('connection', async (socket) => {
         }
         try {
             const chat = await client.getChatById(chatId);
-            const messages = await chat.fetchMessages({ limit: 50 });
-            const formattedMessages = messages.map(formatMessage);
-            socket.emit('messages_list', { chatId, messages: formattedMessages });
+            const messages = await chat.fetchMessages({ limit: 51 });
+            socket.emit('messages_list', {
+                chatId,
+                messages: messages.slice(-50).map(formatMessage),
+                hasMore: messages.length > 50
+            });
         } catch (err) {
             console.error(`Error obteniendo mensajes para ${chatId}:`, err);
             socket.emit('messages_list', { chatId, messages: [] });
+        }
+    });
+
+    socket.on('load_older_messages', async ({ chatId, offset } = {}) => {
+        if (!client || connectionState.status !== 'connected') {
+            return socket.emit('older_messages', { chatId, messages: [], hasMore: false });
+        }
+        if (typeof chatId !== 'string' || !Number.isSafeInteger(offset) || offset < 50) {
+            return socket.emit('older_messages', { chatId, messages: [], hasMore: true, error: 'Solicitud de historial no válida' });
+        }
+        try {
+            const chat = await client.getChatById(chatId);
+            const messages = await chat.fetchMessages({ limit: offset + 51 });
+            const olderMessages = messages.slice(0, Math.max(0, messages.length - offset)).slice(-50);
+            socket.emit('older_messages', {
+                chatId,
+                messages: olderMessages.map(formatMessage),
+                hasMore: messages.length > offset + 50
+            });
+        } catch (err) {
+            console.error(`Error obteniendo mensajes anteriores para ${chatId}:`, err);
+            socket.emit('older_messages', { chatId, messages: [], hasMore: true, error: 'No se pudieron cargar los mensajes anteriores' });
         }
     });
 
