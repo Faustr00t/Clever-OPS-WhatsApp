@@ -1,54 +1,17 @@
-# Imagen base oficial de Node.js en Debian slim
-FROM node:20-bullseye-slim
+# Imagen base oficial de Node.js en Debian Bookworm (estable y con soporte nativo de Chromium)
+FROM node:20-bookworm-slim
 
-# Instalar dependencias del sistema y Google Chrome estable para Puppeteer
+# Instalar Chromium oficial de los repositorios de Debian (sin repositorios externos que puedan fallar)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    gnupg \
-    ca-certificates \
+    chromium \
     fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libgcc1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    xdg-utils \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends google-chrome-stable \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Variables de entorno para Puppeteer y Node
 ENV NODE_ENV=production \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     PORT=3000
 
 WORKDIR /app
@@ -56,10 +19,10 @@ WORKDIR /app
 # Copiar archivos de dependencias
 COPY package*.json ./
 
-# Instalar dependencias
-RUN npm ci --omit=dev
+# Instalar dependencias de producción
+RUN npm install --omit=dev --no-audit
 
-# Copiar código de la aplicación
+# Copiar el código fuente
 COPY . .
 
 # Exponer el puerto
