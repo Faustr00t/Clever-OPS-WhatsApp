@@ -719,6 +719,22 @@ body {
     line-height: 1.4;
 }
 
+.qr-progress-bar {
+    width: 220px;
+    height: 6px;
+    background-color: #e2e8f0;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 2px 0;
+}
+
+.qr-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00a884, #25d366);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
 .spinner {
     width: 40px;
     height: 40px;

@@ -242,11 +242,12 @@ function initWhatsAppClient() {
             dataPath: authDataPath
         }),
         authTimeoutMs: 180000,
-        qrMaxRetries: 5,
+        qrMaxRetries: 10,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         puppeteer: {
             headless: true,
             timeout: 180000,
+            defaultViewport: { width: 800, height: 600 },
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox',
@@ -266,20 +267,29 @@ function initWhatsAppClient() {
                 '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
                 '--disable-ipc-flooding-protection',
                 '--disable-renderer-backgrounding',
+                '--disable-site-isolation-trials',
                 '--force-color-profile=srgb',
-                '--metrics-recording-only'
+                '--metrics-recording-only',
+                '--js-flags=--max-old-space-size=256'
             ]
         }
     });
 
+    // Evento: Progreso de carga interna de WhatsApp Web
+    whatsappClient.on('loading_screen', (percent, message) => {
+        console.log(`[WhatsApp Web] Cargando: ${percent}% - ${message || 'Iniciando'}`);
+        io.emit('loading_progress', { percent, message });
+    });
+
     // Evento: Generación de código QR
     whatsappClient.on('qr', async (qr) => {
-        console.log('Código QR recibido');
+        console.log('Código QR recibido con éxito');
         try {
             const qrDataUrl = await qrcode.toDataURL(qr, { width: 280, margin: 2 });
             connectionState.status = 'connecting';
             connectionState.qrCode = qrDataUrl;
             delete connectionState.message;
+            delete connectionState.error;
             io.emit('status_change', connectionState);
         } catch (err) {
             console.error('Error generando imagen QR:', err);

@@ -146,6 +146,7 @@ function updateConnectionUI(state) {
  */
 function showQRModal(qrCodeUrl, customMsg) {
     qrModal.classList.remove('hidden');
+    const qrProgressFill = document.getElementById('qr-progress-fill');
     if (qrCodeUrl) {
         if (qrImage.getAttribute('src') !== qrCodeUrl) qrImage.src = qrCodeUrl;
         qrImage.classList.remove('hidden');
@@ -153,6 +154,7 @@ function showQRModal(qrCodeUrl, customMsg) {
     } else {
         qrImage.classList.add('hidden');
         qrSpinner.classList.remove('hidden');
+        if (qrProgressFill) qrProgressFill.style.width = '15%';
         if (customMsg) {
             qrStatusMsg.textContent = customMsg;
         }
@@ -372,6 +374,17 @@ function escapeHTML(str) {
 socket.on('status_change', (state) => {
     console.log('Cambio de estado:', state);
     updateConnectionUI(state);
+});
+
+// Progreso de carga interna de WhatsApp Web
+socket.on('loading_progress', (data) => {
+    const qrProgressFill = document.getElementById('qr-progress-fill');
+    if (qrProgressFill && typeof data.percent === 'number') {
+        qrProgressFill.style.width = `${Math.min(Math.max(data.percent, 15), 100)}%`;
+    }
+    if (qrStatusMsg && typeof data.percent === 'number') {
+        qrStatusMsg.textContent = `Cargando WhatsApp Web: ${data.percent}%`;
+    }
 });
 
 // Lista de chats recibida o actualizada

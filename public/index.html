@@ -148,7 +148,10 @@
                     <div class="qr-spinner" id="qr-spinner">
                         <div class="spinner"></div>
                         <p id="qr-status-msg">Iniciando navegador y generando código QR...</p>
-                        <span class="qr-status-submsg">En servidores en la nube esto puede tomar entre 30 y 60 segundos.</span>
+                        <div class="qr-progress-bar" id="qr-progress-bar">
+                            <div class="qr-progress-fill" id="qr-progress-fill" style="width: 15%;"></div>
+                        </div>
+                        <span class="qr-status-submsg">En servidores en la nube esto puede tomar entre 30 y 60 segundos. Por favor no cierres esta ventana.</span>
                     </div>
                     <img id="qr-image" class="hidden" alt="Código QR WhatsApp" />
                 </div>
