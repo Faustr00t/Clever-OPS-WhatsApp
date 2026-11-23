@@ -242,7 +242,16 @@ function initWhatsAppClient() {
         return;
     }
 
-    console.log('Iniciando cliente de WhatsApp...');
+    const initStartedAt = Date.now();
+    let initStage = 'starting';
+    let lastInitLog = initStartedAt;
+    let initDiagnostics;
+    const setInitStage = (stage) => {
+        initStage = stage;
+        lastInitLog = Date.now();
+        console.log(`[${stage.toUpperCase()}] +${((lastInitLog - initStartedAt) / 1000).toFixed(1)}s`);
+    };
+    console.log('[INIT] Iniciando cliente de WhatsApp...');
     connectionState.status = 'connecting';
     connectionState.qrCode = null;
     delete connectionState.message;
@@ -287,8 +296,22 @@ function initWhatsAppClient() {
         }
     });
 
+    setInitStage('whatsapp client created');
+    initDiagnostics = setInterval(() => {
+        if (client !== whatsappClient || connectionState.status !== 'connecting') {
+            clearInterval(initDiagnostics);
+            return;
+        }
+        const now = Date.now();
+        if (now - lastInitLog >= 30000) {
+            console.warn(`[INIT WAIT] etapa=${initStage}; ${((now - initStartedAt) / 1000).toFixed(0)}s desde inicio; Chromium=${whatsappClient.pupBrowser?.process()?.pid || 'pendiente'}`);
+            lastInitLog = now;
+        }
+    }, 10000);
+
     // Evento: Progreso de carga interna de WhatsApp Web
     whatsappClient.on('loading_screen', (percent, message) => {
+        setInitStage(`loading ${percent}%`);
         console.log(`[WhatsApp Web] Cargando: ${percent}% - ${message || 'Iniciando'}`);
         if (percent >= 100 && !connectionState.qrCode) {
             connectionState.message = 'WhatsApp Web cargado; esperando el código QR...';
@@ -299,14 +322,16 @@ function initWhatsAppClient() {
 
     // Evento: Generación de código QR
     whatsappClient.on('qr', async (qr) => {
-        console.log('Evento QR recibido; generando imagen...');
+        setInitStage('qr generated');
+        console.log('[QR GENERATED] Creando imagen para el frontend...');
         try {
             const qrDataUrl = await qrcode.toDataURL(qr, { width: 280, margin: 2 });
+            if (client !== whatsappClient || closingClient) return;
             connectionState.status = 'connecting';
             connectionState.qrCode = qrDataUrl;
             delete connectionState.message;
             delete connectionState.error;
-            console.log('Imagen QR generada y enviada a los clientes');
+            console.log(`[QR SENT] Imagen enviada a clientes conectados (+${((Date.now() - initStartedAt) / 1000).toFixed(1)}s)`);
             io.emit('status_change', connectionState);
         } catch (err) {
             console.error('Error generando imagen QR:', err);
@@ -319,7 +344,8 @@ function initWhatsAppClient() {
 
     // Evento: Autenticado
     whatsappClient.on('authenticated', () => {
-        console.log('Cliente autenticado correctamente');
+        setInitStage('authenticated');
+        console.log(`[AUTHENTICATED] (+${((Date.now() - initStartedAt) / 1000).toFixed(1)}s)`);
         connectionState.status = 'connecting';
         connectionState.qrCode = null;
         io.emit('status_change', { ...connectionState, message: 'Autenticado. Cargando datos...' });
@@ -327,7 +353,9 @@ function initWhatsAppClient() {
 
     // Evento: Listo / Conectado
     whatsappClient.on('ready', async () => {
-        console.log('WhatsApp Web está listo y conectado!');
+        clearInterval(initDiagnostics);
+        setInitStage('ready');
+        console.log(`[READY] WhatsApp conectado (+${((Date.now() - initStartedAt) / 1000).toFixed(1)}s)`);
         connectionState.status = 'connected';
         connectionState.qrCode = null;
         connectionState.info = whatsappClient.info ? {
@@ -351,7 +379,8 @@ function initWhatsAppClient() {
     whatsappClient.on('auth_failure', async (msg) => {
         if (client !== whatsappClient || closingClient) return;
         closingClient = true;
-        console.error('Fallo de autenticación:', msg);
+        clearInterval(initDiagnostics);
+        console.error(`[AUTH FAILURE] etapa=${initStage}:`, msg);
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
         connectionState.info = null;
@@ -372,7 +401,8 @@ function initWhatsAppClient() {
     whatsappClient.on('disconnected', async (reason) => {
         if (client !== whatsappClient || closingClient) return;
         closingClient = true;
-        console.log('Cliente desconectado:', reason);
+        clearInterval(initDiagnostics);
+        console.log(`[DISCONNECTED] etapa=${initStage}:`, reason);
         try {
             await whatsappClient.destroy();
             if (reason === 'LOGOUT') {
@@ -391,6 +421,8 @@ function initWhatsAppClient() {
         }
     });
 
+    whatsappClient.on('error', (err) => console.error(`[WHATSAPP ERROR] etapa=${initStage}:`, err));
+
     // Evento: Nuevo mensaje (recibido o enviado por el usuario)
     whatsappClient.on('message_create', async (msg) => {
         try {
@@ -403,10 +435,16 @@ function initWhatsAppClient() {
         }
     });
 
-    whatsappClient.initialize().catch(async err => {
+    whatsappClient.initialize().then(() => {
+        if (whatsappClient.pupBrowser) {
+            console.log(`[CHROMIUM STARTED] PID ${whatsappClient.pupBrowser.process()?.pid || 'desconocido'} (+${((Date.now() - initStartedAt) / 1000).toFixed(1)}s)`);
+            whatsappClient.pupBrowser.once('disconnected', () => console.error(`[CHROMIUM DISCONNECTED] etapa=${initStage}`));
+        }
+    }).catch(async err => {
         if (client !== whatsappClient) return;
         closingClient = true;
-        console.error('Error al inicializar cliente de WhatsApp/Chromium:', err);
+        clearInterval(initDiagnostics);
+        console.error(`[INIT ERROR] etapa=${initStage} (+${((Date.now() - initStartedAt) / 1000).toFixed(1)}s):`, err);
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
         io.emit('status_change', { ...connectionState, error: err.message });
