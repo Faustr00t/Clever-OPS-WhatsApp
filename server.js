@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const path = require('path');
+const os = require('os');
 const { execFileSync } = require('child_process');
 const { summaryService } = require('./services/summary');
 
@@ -16,7 +17,7 @@ const io = new Server(server, { maxHttpBufferSize: 12 * 1024 * 1024 });
 const PORT = process.env.PORT || 3000;
 // shortcut: archivos de hasta 8 MB; para archivos mayores, migrar a carga HTTP por streaming.
 const MAX_MEDIA_SIZE = 8 * 1024 * 1024;
-const authDataPath = process.env.WHATSAPP_AUTH_PATH || path.join(__dirname, '.wwebjs_auth');
+const authDataPath = process.env.WHATSAPP_AUTH_PATH || (process.env.VERCEL ? path.join(os.tmpdir(), '.wwebjs_auth') : path.join(__dirname, '.wwebjs_auth'));
 const authSessionPath = path.join(authDataPath, 'session');
 const instanceLockPath = path.join(authDataPath, 'instance.lock');
 let ownsInstanceLock = false;

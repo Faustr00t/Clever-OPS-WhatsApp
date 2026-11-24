@@ -89,3 +89,8 @@ El proyecto incluye integración directa con **Google Gemini** para resumir conv
 - Para conservar la sesion entre reinicios y despliegues, agrega un disco persistente montado en `/var/data` y define `WHATSAPP_AUTH_PATH=/var/data/.wwebjs_auth` en las variables de entorno. Sin disco persistente, Render borra la sesion y tendras que volver a vincular WhatsApp.
 - Los servicios gratuitos de Render se suspenden tras un periodo sin trafico. Al reactivarse, espera a que el servicio termine de iniciar antes de pulsar **Conectar**.
 - En los registros, `Evento QR recibido` confirma que WhatsApp entrego el QR; `Imagen QR generada` confirma que el servidor lo envio al navegador. Si solo aparece que espera el QR, revisa el error de Chromium o inicializacion que aparezca despues.
+
+## Vercel
+
+- En Vercel, `LocalAuth` usa `/tmp/.wwebjs_auth` por defecto porque `/var/task` pertenece al despliegue y no es una ruta adecuada para escribir. Puedes cambiarla con `WHATSAPP_AUTH_PATH`.
+- `/tmp` es temporal y cada instancia serverless puede tener su propio almacenamiento. La sesión y el proceso de WhatsApp Web no son persistentes entre reinicios; para conservar la vinculación y una conexión continua se requiere un servicio persistente con disco.
