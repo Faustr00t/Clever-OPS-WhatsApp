@@ -794,6 +794,16 @@ body {
 /* Estilos de la tarjeta del modal de resumen */
 .summary-card {
     max-width: 580px;
+    max-height: calc(100vh - 32px);
+    display: flex;
+    flex-direction: column;
+}
+
+.summary-card .modal-body {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
 }
 
 .summary-header-title {
@@ -858,6 +868,7 @@ body {
 
 .summary-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 8px;
     font-size: 14px;
@@ -873,7 +884,7 @@ body {
 
 .summary-value {
     color: #3b4a54;
-    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .summary-raw-container {
